@@ -4,9 +4,9 @@ on:
   workflow_dispatch: {}
 
 env:
-  applicationfolder: spring-boot-hello-world-example
-  AWS_REGION: ##region##
-  S3BUCKET: ##s3-bucket## 
+  applicationfolder: node-cicd-practice
+  AWS_REGION: us-east-1
+  S3BUCKET: codedeploystack-webappdeploymentbucket-h8kwtqywhdxq
 
 
 jobs:
