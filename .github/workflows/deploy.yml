@@ -1,13 +1,18 @@
 name: Build and Deploy
 
 on:
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Deployment environment'
+        required: true
+        default: 'dev'
+        type: string
 
 env:
   applicationfolder: node-cicd-practice
   AWS_REGION: us-east-1
-  S3BUCKET: codedeploystack-webappdeploymentbucket-h8kwtqywhdxq
-
+  S3BUCKET: 	node-cicd-practice-webappdeploymentbucket-zwtwprfly8ch
 
 jobs:
   build:
@@ -17,47 +22,69 @@ jobs:
       id-token: write
       contents: read
     steps:
-      - uses: actions/checkout@v2
-        name: Checkout Repository
+      - name: Checkout Repository
+        uses: actions/checkout@v2
 
-      - uses: aws-actions/configure-aws-credentials@v1
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v1
         with:
           role-to-assume: ${{ secrets.IAMROLE_GITHUB }}
           role-session-name: GitHub-Action-Role
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Set up JDK 1.8
-        uses: actions/setup-java@v1
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v3
         with:
-          java-version: 1.8
+          node-version: "20"
 
-      - name: chmod
-        run: chmod -R +x ./.github
+      - name: Cache Node.js dependencies
+        uses: actions/cache@v3
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-
 
-      - name: Build and Package Maven
+      - name: Make build script executable
+        run: chmod +x ./.github/scripts/build.sh
+
+      - name: Build and Package Node.js
         id: package
         working-directory: ${{ env.applicationfolder }}
         run: $GITHUB_WORKSPACE/.github/scripts/build.sh
 
-      - name: Upload Artifact to s3
-        working-directory: ${{ env.applicationfolder }}/target
-        run: aws s3 cp *.war s3://${{ env.S3BUCKET }}/
-        
+      - name: Upload Artifact to S3
+        working-directory: ${{ env.applicationfolder }}/dist
+        run: |
+          echo "Uploading artifacts to S3..."
+          aws s3 cp . s3://${{ env.S3BUCKET }}/${{ github.event.inputs.environment }}/ --recursive
+
   deploy:
     needs: build
     runs-on: ubuntu-latest
-    environment: Dev
+    environment: ${{ github.event.inputs.environment }}  # Dynamic environment value
     permissions:
       id-token: write
       contents: read
     steps:
-    - uses: actions/checkout@v2
-    - uses: aws-actions/configure-aws-credentials@v1
-      with:
-        role-to-assume: ${{ secrets.IAMROLE_GITHUB }}
-        role-session-name: GitHub-Action-Role
-        aws-region: ${{ env.AWS_REGION }}
-    - run: |
-        echo "Deploying branch ${{ env.GITHUB_REF }} to ${{ github.event.inputs.environment }}"
-        commit_hash=`git rev-parse HEAD`
-        aws deploy create-deployment --application-name CodeDeployAppNameWithASG --deployment-group-name CodeDeployGroupName --github-location repository=$GITHUB_REPOSITORY,commitId=$commit_hash --ignore-application-stop-failures
+      - name: Checkout Repository
+        uses: actions/checkout@v2
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          role-to-assume: ${{ secrets.IAMROLE_GITHUB }}
+          role-session-name: GitHub-Action-Role
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Deploy to CodeDeploy
+        run: |
+          echo "Deploying branch or tag ${{ github.ref }} to ${{ github.event.inputs.environment }}"
+          commit_hash=$(git rev-parse HEAD)
+          aws deploy create-deployment \
+            --application-name CodeDeployAppNameWithASG \
+            --deployment-group-name CodeDeployGroupName \
+            --github-location repository=$GITHUB_REPOSITORY,commitId=$commit_hash \
+            --ignore-application-stop-failures \
+            --description "Deployment initiated from GitHub Actions on environment: ${{ github.event.inputs.environment }}" \
+            # --timeout 600
